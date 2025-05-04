@@ -7,12 +7,17 @@ from math import *
 from numpy import *
 import sys
 import copy
+from typing import List, Dict, Optional
+import numpy as np
+from numpy.typing import NDArray
 
 class Edge:
     pass
 
 class Vertex:
-    pass
+    position: NDArray[np.float32]
+    eminatingEdge: Optional['Edge']
+    index: int
 
 class Face:
     pass
