@@ -11,6 +11,8 @@ from typing import List, Dict, Optional
 import numpy as np
 from numpy.typing import NDArray
 
+# Edge, Vertex, and Face classes have no methods. 
+# They are just data structures to store the mesh data.
 class Edge:
     pass
 
@@ -61,12 +63,12 @@ class Mesh:
                 e.previousEdge = self.edges[firstEdgeOfFace + previousIndex]
                 e.texCoord = texCoords[faceIndex,vertexIndex,:]
 
-                symmetricEdge = edgeMap.get("%i,%i" % (v1, v0))
+                symmetricEdge = edgeMap.get((v1, v0))
                 if (symmetricEdge):
                     e.symmetricEdge = symmetricEdge # Symmetric edge already processed
                     symmetricEdge.symmetricEdge = e
                 else:
-                    edgeMap["%i,%i" % (v0, v1)] = e # not processed. Put in map
+                    edgeMap[(v0, v1)] = e # not processed. Put in map
 
             firstEdgeOfFace += countOfVertices
 
