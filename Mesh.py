@@ -14,7 +14,14 @@ from numpy.typing import NDArray
 # Edge, Vertex, and Face classes have no methods. 
 # They are just data structures to store the mesh data.
 class Edge:
-    pass
+    vertex: 'Vertex'  # The vertex this edge points to
+    face: 'Face'      # The face this edge belongs to
+    nextEdge: 'Edge'  # The next edge in the face's edge loop
+    previousEdge: 'Edge'  # The previous edge in the face's edge loop
+    symmetricEdge: 'Edge'  # The edge pointing in the opposite direction
+    texCoord: NDArray[np.float32]  # Texture coordinates for this edge
+    flatNormal: NDArray[np.float32]  # Normal for flat shading
+    smoothNormal: NDArray[np.float32]  # Normal for smooth shading
 
 class Vertex:
     position: NDArray[np.float32]
