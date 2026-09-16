@@ -10,6 +10,7 @@ from numpy import array, ascontiguousarray, cross, empty, float32, identity, uin
 from numpy.linalg import norm
 from OpenGL.GL import *
 from PIL import Image
+from PySide6.QtCore import Qt
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from Bunny import Bunny
@@ -29,6 +30,9 @@ LIGHT0_POSITION = (30, 30, 30, 0)
 LIGHT0_AMBIENT = (0.3, 0.3, 0.3, 1)
 LIGHT0_DIFFUSE = (1, 1, 1, 1)
 LIGHT0_SPECULAR = (1, 1, 1, 1)
+
+ORBIT_RADIANS_PER_PIXEL = pi / 180
+ORBIT_PHI_EPSILON = 1e-7
 
 
 def calculate_texture_coordinates(vertices, indices):
@@ -128,6 +132,9 @@ class MeshGLWidget(QOpenGLWidget):
         self.eye_theta = pi / 4
         self.lookat = array([0.0, 0.0, 0.0])
         self.up = array([0.0, 0.0, 1.0])
+        self._orbiting = False
+        self._mouse_x = 0.0
+        self._mouse_y = 0.0
 
         self.vertices_buffer_id = 0
         self.smooth_normals_buffer_id = 0
@@ -223,6 +230,33 @@ class MeshGLWidget(QOpenGLWidget):
     def resizeGL(self, width, height):
         glViewport(0, 0, max(1, width), max(1, height))
         self._set_projection(width, height)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._orbiting = True
+            self._mouse_x = event.position().x()
+            self._mouse_y = event.position().y()
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self._orbiting = False
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        if not self._orbiting:
+            return
+        x = event.position().x()
+        y = event.position().y()
+        self.eye_theta -= (x - self._mouse_x) * ORBIT_RADIANS_PER_PIXEL
+        self.eye_phi -= (y - self._mouse_y) * ORBIT_RADIANS_PER_PIXEL
+        if self.eye_phi >= pi:
+            self.eye_phi = pi - ORBIT_PHI_EPSILON
+        elif self.eye_phi <= 0:
+            self.eye_phi = ORBIT_PHI_EPSILON
+        self._mouse_x = x
+        self._mouse_y = y
+        self.update()
+        event.accept()
 
     def _create_meshes(self):
         bunny_tex_coords = calculate_texture_coordinates(
