@@ -125,8 +125,10 @@ class MeshGLWidget(QOpenGLWidget):
         self.mesh = None
         self.shade = False
         self.cull = False
+        self.annotate = False
         self.smooth = False
         self.texture = False
+        self._buffers_dirty = False
 
         self.eye_radius = 2.5
         self.eye_phi = pi / 4
@@ -170,10 +172,11 @@ class MeshGLWidget(QOpenGLWidget):
          self.texture_buffer_id) = glGenBuffers(4)
 
         self._create_meshes()
-        self._set_mesh(self.tetrahedron)
         self.tetrahedron_centroid = get_centroid(self.tetrahedron)
         self.cube_centroid = get_centroid(self.tri_cube)
         self.bunny_centroid = get_centroid(self.bunny)
+        self.mesh = self.tetrahedron
+        self._upload_mesh()
 
         self.set_lookat(self.tetrahedron_centroid)
         self._set_projection(self.width(), self.height())
@@ -190,6 +193,10 @@ class MeshGLWidget(QOpenGLWidget):
         glDisable(GL_LIGHTING)
 
     def paintGL(self):
+        if self._buffers_dirty:
+            self._upload_mesh()
+            self._buffers_dirty = False
+
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glEnable(GL_DEPTH_TEST)
         self._apply_view()
@@ -307,8 +314,18 @@ class MeshGLWidget(QOpenGLWidget):
         self.subdivided_tri_cube3 = copy.deepcopy(self.subdivided_tri_cube2)
         self.subdivided_tri_cube3.butterflySubdivide()
 
-    def _set_mesh(self, mesh):
+    def select_mesh(self, mesh, centroid):
         self.mesh = mesh
+        self._buffers_dirty = True
+        self.set_lookat(centroid)
+        self.update()
+
+    def set_display_option(self, name, enabled):
+        setattr(self, name, enabled)
+        self.update()
+
+    def _upload_mesh(self):
+        mesh = self.mesh
         glBindBuffer(GL_ARRAY_BUFFER, self.vertices_buffer_id)
         glBufferData(GL_ARRAY_BUFFER, mesh.vboVertices, GL_STATIC_DRAW)
         glBindBuffer(GL_ARRAY_BUFFER, self.flat_normals_buffer_id)
