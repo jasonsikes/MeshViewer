@@ -26,6 +26,7 @@ def make_surface_format():
 
 
 def main():
+    sys.setrecursionlimit(10000)
     QSurfaceFormat.setDefaultFormat(make_surface_format())
     app = QApplication(sys.argv)
     window = MainWindow()
