@@ -33,6 +33,7 @@ LIGHT0_SPECULAR = (1, 1, 1, 1)
 
 ORBIT_RADIANS_PER_PIXEL = pi / 180
 ORBIT_PHI_EPSILON = 1e-7
+ZOOM_IN_FACTOR = 0.95
 
 
 def calculate_texture_coordinates(vertices, indices):
@@ -255,6 +256,17 @@ class MeshGLWidget(QOpenGLWidget):
             self.eye_phi = ORBIT_PHI_EPSILON
         self._mouse_x = x
         self._mouse_y = y
+        self.update()
+        event.accept()
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        if delta == 0:
+            delta = event.pixelDelta().y()
+        if delta == 0:
+            return
+        steps = delta / 120.0
+        self.eye_radius *= ZOOM_IN_FACTOR ** steps
         self.update()
         event.accept()
 
