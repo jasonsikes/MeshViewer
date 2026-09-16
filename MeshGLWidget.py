@@ -4,11 +4,11 @@
 
 import copy
 import os
-from math import atan2, cos, pi, sin
+from math import atan2, cos, pi, sin, tan
 
-from numpy import array, empty, float32, uint8, zeros
+from numpy import array, ascontiguousarray, cross, empty, float32, identity, uint8, zeros
+from numpy.linalg import norm
 from OpenGL.GL import *
-from OpenGL.GLU import gluLookAt, gluPerspective
 from PIL import Image
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
@@ -72,6 +72,40 @@ def spherical_to_cartesian(r, theta, phi):
                   r * cos(phi)])
 
 
+def _as_gl_matrix(matrix):
+    return ascontiguousarray(matrix, dtype=float32).flatten("F")
+
+
+def look_at_matrix(eye, center, up):
+    eye = array(eye, dtype=float)
+    center = array(center, dtype=float)
+    up = array(up, dtype=float)
+    forward = center - eye
+    forward = forward / norm(forward)
+    side = cross(forward, up)
+    side = side / norm(side)
+    upn = cross(side, forward)
+    matrix = identity(4, dtype=float)
+    matrix[0, 0:3] = side
+    matrix[1, 0:3] = upn
+    matrix[2, 0:3] = -forward
+    matrix[0, 3] = -side.dot(eye)
+    matrix[1, 3] = -upn.dot(eye)
+    matrix[2, 3] = forward.dot(eye)
+    return matrix
+
+
+def perspective_matrix(fovy_degrees, aspect, z_near, z_far):
+    f = 1.0 / tan(fovy_degrees * pi / 360.0)
+    matrix = zeros((4, 4), dtype=float)
+    matrix[0, 0] = f / aspect
+    matrix[1, 1] = f
+    matrix[2, 2] = (z_far + z_near) / (z_near - z_far)
+    matrix[3, 2] = -1.0
+    matrix[2, 3] = (2.0 * z_far * z_near) / (z_near - z_far)
+    return matrix
+
+
 def get_centroid(mesh):
     centroid = zeros(3)
     for vert in mesh.verts:
@@ -133,8 +167,8 @@ class MeshGLWidget(QOpenGLWidget):
         self.cube_centroid = get_centroid(self.tri_cube)
         self.bunny_centroid = get_centroid(self.bunny)
 
+        self.set_lookat(self.tetrahedron_centroid)
         self._set_projection(self.width(), self.height())
-        self._set_view(self.tetrahedron_centroid)
         self._init_lighting()
         self._init_texture()
 
@@ -150,6 +184,7 @@ class MeshGLWidget(QOpenGLWidget):
     def paintGL(self):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glEnable(GL_DEPTH_TEST)
+        self._apply_view()
         glColor3f(1, 1, 1)
 
         if self.shade:
@@ -237,21 +272,20 @@ class MeshGLWidget(QOpenGLWidget):
         glBindBuffer(GL_ARRAY_BUFFER, self.texture_buffer_id)
         glBufferData(GL_ARRAY_BUFFER, mesh.vboTexCoords, GL_STATIC_DRAW)
 
-    def _set_view(self, centroid):
+    def set_lookat(self, centroid):
         if centroid is not None:
             self.lookat = centroid
+
+    def _apply_view(self):
         eye = spherical_to_cartesian(self.eye_radius, self.eye_theta, self.eye_phi)
         eye = eye + self.lookat
         glMatrixMode(GL_MODELVIEW)
-        glLoadIdentity()
-        gluLookAt(eye[0], eye[1], eye[2],
-                  self.lookat[0], self.lookat[1], self.lookat[2],
-                  self.up[0], self.up[1], self.up[2])
+        glLoadMatrixf(_as_gl_matrix(look_at_matrix(eye, self.lookat, self.up)))
 
     def _set_projection(self, width, height):
+        aspect = max(1, width) / max(1, height)
         glMatrixMode(GL_PROJECTION)
-        glLoadIdentity()
-        gluPerspective(40.0, max(1, width) / max(1, height), 0.1, 30.0)
+        glLoadMatrixf(_as_gl_matrix(perspective_matrix(40.0, aspect, 0.1, 30.0)))
         glMatrixMode(GL_MODELVIEW)
 
     def _init_lighting(self):
