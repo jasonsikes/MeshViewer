@@ -11,7 +11,7 @@ from numpy.linalg import norm
 from OpenGL.GL import *
 from PIL import Image
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QPainter, QSurfaceFormat
+from PySide6.QtGui import QFontDatabase, QPainter, QSurfaceFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from Bunny import Bunny
@@ -569,7 +569,7 @@ class MeshGLWidget(QOpenGLWidget):
         glUseProgram(0)
 
         painter = QPainter(self)
-        font = QFont("Courier")
+        font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         font.setPixelSize(13)
         painter.setFont(font)
         painter.setPen(Qt.GlobalColor.white)
