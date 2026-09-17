@@ -181,7 +181,6 @@ class MeshGLWidget(QOpenGLWidget):
     def initializeGL(self):
         glEnable(GL_DEPTH_TEST)
         glClearColor(0.12, 0.12, 0.14, 1.0)
-        # self._log_gl_context()
 
         (self.vertices_buffer_id,
          self.smooth_normals_buffer_id,
@@ -483,19 +482,3 @@ class MeshGLWidget(QOpenGLWidget):
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
         glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
         glDisable(GL_TEXTURE_2D)
-
-    def _log_gl_context(self):
-        vendor = _gl_string(glGetString(GL_VENDOR))
-        renderer = _gl_string(glGetString(GL_RENDERER))
-        version = _gl_string(glGetString(GL_VERSION))
-        print(f"OpenGL vendor:   {vendor}")
-        print(f"OpenGL renderer: {renderer}")
-        print(f"OpenGL version:  {version}")
-
-
-def _gl_string(value):
-    if value is None:
-        return ""
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return str(value)
