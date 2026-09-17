@@ -179,7 +179,6 @@ class MeshGLWidget(QOpenGLWidget):
         self.bunny_centroid = None
 
     def initializeGL(self):
-        glEnable(GL_DEPTH_TEST)
         glClearColor(0.12, 0.12, 0.14, 1.0)
 
         (self.vertices_buffer_id,
@@ -195,19 +194,8 @@ class MeshGLWidget(QOpenGLWidget):
         self._upload_mesh()
 
         self.set_lookat(self.tetrahedron_centroid)
-        self._set_projection(self.width(), self.height())
-        self._init_lighting()
         self._init_texture()
         self._label_texture_id = glGenTextures(1)
-
-        glEnableClientState(GL_VERTEX_ARRAY)
-        glEnableClientState(GL_NORMAL_ARRAY)
-        glEnableClientState(GL_TEXTURE_COORD_ARRAY)
-        glShadeModel(GL_SMOOTH)
-        glCullFace(GL_BACK)
-        glDisable(GL_CULL_FACE)
-        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
-        glDisable(GL_LIGHTING)
 
     def paintGL(self):
         if self._buffers_dirty:
