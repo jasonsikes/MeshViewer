@@ -197,6 +197,35 @@ class MeshGLWidget(QOpenGLWidget):
         self._init_texture()
         self._label_texture_id = glGenTextures(1)
 
+    def closeEvent(self, event):
+        self.delete_gl_objects()
+        super().closeEvent(event)
+
+    def delete_gl_objects(self):
+        if not self.isValid():
+            return
+        self.makeCurrent()
+        buffer_ids = [buffer_id for buffer_id in (
+            self.vertices_buffer_id,
+            self.smooth_normals_buffer_id,
+            self.flat_normals_buffer_id,
+            self.texture_buffer_id,
+        ) if buffer_id]
+        if buffer_ids:
+            glDeleteBuffers(len(buffer_ids), buffer_ids)
+        self.vertices_buffer_id = 0
+        self.smooth_normals_buffer_id = 0
+        self.flat_normals_buffer_id = 0
+        self.texture_buffer_id = 0
+
+        texture_ids = [texture_id for texture_id in (
+            self.texture_id, self._label_texture_id) if texture_id]
+        if texture_ids:
+            glDeleteTextures(len(texture_ids), texture_ids)
+        self.texture_id = 0
+        self._label_texture_id = 0
+        self.doneCurrent()
+
     def paintGL(self):
         if self._buffers_dirty:
             self._upload_mesh()

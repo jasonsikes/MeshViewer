@@ -19,6 +19,10 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.gl_widget)
         self._create_menus()
 
+    def closeEvent(self, event):
+        self.gl_widget.delete_gl_objects()
+        super().closeEvent(event)
+
     def _create_menus(self):
         self._mesh_group = QActionGroup(self)
         self._mesh_group.setExclusive(True)
