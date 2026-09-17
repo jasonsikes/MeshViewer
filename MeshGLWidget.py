@@ -11,7 +11,7 @@ from numpy.linalg import norm
 from OpenGL.GL import *
 from PIL import Image
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QPainter
+from PySide6.QtGui import QFont, QPainter, QSurfaceFormat
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from Bunny import Bunny
@@ -27,7 +27,7 @@ SPECULAR = (0.5, 0.5, 0.5, 1)
 SHININESS = 51.2
 
 LIGHT_MODEL_AMBIENT = (0.1, 0.1, 0.1, 1)
-LIGHT0_POSITION = (30, 30, 30, 0)
+LIGHT0_POSITION = (30.0, 30.0, 30.0, 0.0)
 LIGHT0_AMBIENT = (0.3, 0.3, 0.3, 1)
 LIGHT0_DIFFUSE = (1, 1, 1, 1)
 LIGHT0_SPECULAR = (1, 1, 1, 1)
@@ -35,6 +35,76 @@ LIGHT0_SPECULAR = (1, 1, 1, 1)
 ORBIT_RADIANS_PER_PIXEL = pi / 180
 ORBIT_PHI_EPSILON = 1e-7
 ZOOM_IN_FACTOR = 0.95
+
+VERTEX_SHADER = """
+#version 410 core
+
+layout(location = 0) in vec3 position;
+layout(location = 1) in vec3 normal;
+layout(location = 2) in vec2 texCoord;
+
+uniform mat4 mvp;
+uniform mat3 normalMatrix;
+
+out vec3 eyeNormal;
+out vec2 vTexCoord;
+
+void main()
+{
+    eyeNormal = normalMatrix * normal;
+    vTexCoord = texCoord;
+    gl_Position = mvp * vec4(position, 1.0);
+}
+"""
+
+FRAGMENT_SHADER = """
+#version 410 core
+
+in vec3 eyeNormal;
+in vec2 vTexCoord;
+
+uniform int shade;
+uniform int useTexture;
+uniform sampler2D meshTexture;
+
+uniform vec4 lightModelAmbient;
+uniform vec4 lightPosition;
+uniform vec4 lightAmbient;
+uniform vec4 lightDiffuse;
+uniform vec4 lightSpecular;
+uniform vec4 materialAmbient;
+uniform vec4 materialDiffuse;
+uniform vec4 materialSpecular;
+uniform float materialShininess;
+
+out vec4 fragColor;
+
+void main()
+{
+    vec3 color = vec3(1.0);
+    if (shade != 0) {
+        vec3 N = normalize(eyeNormal);
+        vec3 L = normalize(lightPosition.xyz);
+        vec3 V = vec3(0.0, 0.0, 1.0);
+        vec3 H = normalize(L + V);
+        float ndotl = max(dot(N, L), 0.0);
+        vec3 ambient = materialAmbient.rgb
+            * (lightModelAmbient.rgb + lightAmbient.rgb);
+        vec3 diffuse = materialDiffuse.rgb * lightDiffuse.rgb * ndotl;
+        vec3 specular = vec3(0.0);
+        if (ndotl > 0.0) {
+            specular = materialSpecular.rgb * lightSpecular.rgb
+                * pow(max(dot(N, H), 0.0), materialShininess);
+        }
+        color = ambient + diffuse + specular;
+    }
+    vec4 outColor = vec4(color, 1.0);
+    if (useTexture != 0) {
+        outColor *= texture(meshTexture, vTexCoord);
+    }
+    fragColor = outColor;
+}
+"""
 
 
 def calculate_texture_coordinates(vertices, indices):
@@ -132,6 +202,35 @@ def get_centroid(mesh):
     return centroid
 
 
+def _gl_info_log(log):
+    if log is None:
+        return ""
+    if isinstance(log, bytes):
+        return log.decode("utf-8", errors="replace")
+    return str(log)
+
+
+def _gl_id(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(value[0])
+
+
+def _gl_succeeded(value):
+    return int(ascontiguousarray(value).reshape(-1)[0]) != 0
+
+
+def _compile_shader(source, shader_type, label):
+    shader = glCreateShader(shader_type)
+    glShaderSource(shader, source)
+    glCompileShader(shader)
+    if not _gl_succeeded(glGetShaderiv(shader, GL_COMPILE_STATUS)):
+        raise RuntimeError("%s shader compile failed:\n%s" % (
+            label, _gl_info_log(glGetShaderInfoLog(shader))))
+    return shader
+
+
 class MeshGLWidget(QOpenGLWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -160,6 +259,9 @@ class MeshGLWidget(QOpenGLWidget):
         self.flat_normals_buffer_id = 0
         self.texture_buffer_id = 0
         self.texture_id = 0
+        self.vao = 0
+        self.program = 0
+        self._uniforms = {}
 
         self.bunny = None
         self.subdivided_bunny = None
@@ -178,12 +280,17 @@ class MeshGLWidget(QOpenGLWidget):
         self.bunny_centroid = None
 
     def initializeGL(self):
+        self._require_gl_41_core()
         glClearColor(0.12, 0.12, 0.14, 1.0)
+        glEnable(GL_DEPTH_TEST)
+        glCullFace(GL_BACK)
 
+        self.program = self._create_program()
+        self.vao = _gl_id(glGenVertexArrays(1))
         (self.vertices_buffer_id,
          self.smooth_normals_buffer_id,
          self.flat_normals_buffer_id,
-         self.texture_buffer_id) = glGenBuffers(4)
+         self.texture_buffer_id) = [_gl_id(buffer_id) for buffer_id in glGenBuffers(4)]
 
         self._create_meshes()
         self.tetrahedron_centroid = get_centroid(self.tetrahedron)
@@ -195,6 +302,42 @@ class MeshGLWidget(QOpenGLWidget):
         self.set_lookat(self.tetrahedron_centroid)
         self._init_texture()
 
+    def _require_gl_41_core(self):
+        ctx = self.context()
+        fmt = ctx.format() if ctx is not None else self.format()
+        version = (fmt.majorVersion(), fmt.minorVersion())
+        profile = fmt.profile()
+        gl_version = _gl_info_log(glGetString(GL_VERSION)).strip()
+        if profile != QSurfaceFormat.CoreProfile or version < (4, 1):
+            raise RuntimeError(
+                "OpenGL 4.1 core is required. "
+                "Got Qt format %d.%d profile=%s; GL_VERSION=%s" % (
+                    version[0], version[1], profile, gl_version or "unknown"))
+
+    def _create_program(self):
+        vertex_shader = _compile_shader(VERTEX_SHADER, GL_VERTEX_SHADER, "Vertex")
+        fragment_shader = _compile_shader(
+            FRAGMENT_SHADER, GL_FRAGMENT_SHADER, "Fragment")
+        program = glCreateProgram()
+        glAttachShader(program, vertex_shader)
+        glAttachShader(program, fragment_shader)
+        glLinkProgram(program)
+        glDeleteShader(vertex_shader)
+        glDeleteShader(fragment_shader)
+        if not _gl_succeeded(glGetProgramiv(program, GL_LINK_STATUS)):
+            raise RuntimeError("Shader link failed:\n%s" % _gl_info_log(
+                glGetProgramInfoLog(program)))
+
+        self._uniforms = {}
+        for name in (
+            "mvp", "normalMatrix", "shade", "useTexture", "meshTexture",
+            "lightModelAmbient", "lightPosition", "lightAmbient", "lightDiffuse",
+            "lightSpecular", "materialAmbient", "materialDiffuse",
+            "materialSpecular", "materialShininess",
+        ):
+            self._uniforms[name] = glGetUniformLocation(program, name)
+        return int(program)
+
     def closeEvent(self, event):
         self.delete_gl_objects()
         super().closeEvent(event)
@@ -203,6 +346,9 @@ class MeshGLWidget(QOpenGLWidget):
         if not self.isValid():
             return
         self.makeCurrent()
+        if self.vao:
+            glDeleteVertexArrays(1, [self.vao])
+            self.vao = 0
         buffer_ids = [buffer_id for buffer_id in (
             self.vertices_buffer_id,
             self.smooth_normals_buffer_id,
@@ -219,6 +365,9 @@ class MeshGLWidget(QOpenGLWidget):
         if self.texture_id:
             glDeleteTextures(1, [self.texture_id])
         self.texture_id = 0
+        if self.program:
+            glDeleteProgram(self.program)
+            self.program = 0
         self.doneCurrent()
 
     def paintGL(self):
@@ -226,55 +375,78 @@ class MeshGLWidget(QOpenGLWidget):
             self._upload_mesh()
             self._buffers_dirty = False
 
-        self._restore_fixed_function()
+        self._apply_view()
+        self._set_projection(self._viewport[2], self._viewport[3])
+
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glEnable(GL_DEPTH_TEST)
-        glDisable(GL_COLOR_MATERIAL)
-        self._set_projection(self._viewport[2], self._viewport[3])
-        self._apply_view()
-        self._init_lighting()
-        glColor3f(1, 1, 1)
+        glUseProgram(self.program)
+        self._set_shader_uniforms()
 
         if self.shade:
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
-            glEnable(GL_LIGHTING)
         else:
             glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
-            glDisable(GL_LIGHTING)
 
         if self.cull:
             glEnable(GL_CULL_FACE)
         else:
             glDisable(GL_CULL_FACE)
 
-        glEnableClientState(GL_VERTEX_ARRAY)
-        glEnableClientState(GL_NORMAL_ARRAY)
-        glBindBuffer(GL_ARRAY_BUFFER, self.vertices_buffer_id)
-        glVertexPointer(3, GL_FLOAT, 0, None)
-
-        if self.texture:
-            glEnable(GL_TEXTURE_2D)
-            glBindTexture(GL_TEXTURE_2D, self.texture_id)
-            glEnableClientState(GL_TEXTURE_COORD_ARRAY)
-            glBindBuffer(GL_ARRAY_BUFFER, self.texture_buffer_id)
-            glTexCoordPointer(2, GL_FLOAT, 0, None)
-        else:
-            glDisable(GL_TEXTURE_2D)
-
-        if self.smooth:
-            glBindBuffer(GL_ARRAY_BUFFER, self.smooth_normals_buffer_id)
-        else:
-            glBindBuffer(GL_ARRAY_BUFFER, self.flat_normals_buffer_id)
-        glNormalPointer(GL_FLOAT, 0, None)
-
+        self._bind_mesh_attributes()
+        glActiveTexture(GL_TEXTURE0)
+        glBindTexture(GL_TEXTURE_2D, self.texture_id)
         glDrawArrays(GL_TRIANGLES, 0, len(self.mesh.vboVertices) // 3)
+
+        glBindVertexArray(0)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+        glUseProgram(0)
+
         if self.annotate:
             self._draw_vertex_labels()
 
+    def _set_shader_uniforms(self):
+        u = self._uniforms
+        mvp = self._proj_matrix @ self._view_matrix
+        glUniformMatrix4fv(u["mvp"], 1, GL_FALSE, _as_gl_matrix(mvp))
+        glUniformMatrix3fv(
+            u["normalMatrix"], 1, GL_FALSE,
+            _as_gl_matrix(self._view_matrix[0:3, 0:3]))
+        glUniform1i(u["shade"], 1 if self.shade else 0)
+        glUniform1i(u["useTexture"], 1 if self.texture else 0)
+        glUniform1i(u["meshTexture"], 0)
+        glUniform4f(u["lightModelAmbient"], *LIGHT_MODEL_AMBIENT)
+        glUniform4f(u["lightPosition"], *LIGHT0_POSITION)
+        glUniform4f(u["lightAmbient"], *LIGHT0_AMBIENT)
+        glUniform4f(u["lightDiffuse"], *LIGHT0_DIFFUSE)
+        glUniform4f(u["lightSpecular"], *LIGHT0_SPECULAR)
+        glUniform4f(u["materialAmbient"], *AMBIENT)
+        glUniform4f(u["materialDiffuse"], *DIFFUSE)
+        glUniform4f(u["materialSpecular"], *SPECULAR)
+        glUniform1f(u["materialShininess"], SHININESS)
+
+    def _bind_mesh_attributes(self):
+        glBindVertexArray(self.vao)
+        glBindBuffer(GL_ARRAY_BUFFER, self.vertices_buffer_id)
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, None)
+        glEnableVertexAttribArray(0)
+
+        normal_id = (self.smooth_normals_buffer_id if self.smooth
+                     else self.flat_normals_buffer_id)
+        glBindBuffer(GL_ARRAY_BUFFER, normal_id)
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, None)
+        glEnableVertexAttribArray(1)
+
+        glBindBuffer(GL_ARRAY_BUFFER, self.texture_buffer_id)
+        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 0, None)
+        glEnableVertexAttribArray(2)
+
     def resizeGL(self, width, height):
-        self._viewport = (0, 0, max(1, width), max(1, height))
-        glViewport(0, 0, self._viewport[2], self._viewport[3])
-        self._set_projection(width, height)
+        fb_w = max(1, width)
+        fb_h = max(1, height)
+        self._viewport = (0, 0, fb_w, fb_h)
+        glViewport(0, 0, fb_w, fb_h)
+        self._set_projection(fb_w, fb_h)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -371,6 +543,7 @@ class MeshGLWidget(QOpenGLWidget):
         glBufferData(GL_ARRAY_BUFFER, mesh.vboSmoothNormals, GL_STATIC_DRAW)
         glBindBuffer(GL_ARRAY_BUFFER, self.texture_buffer_id)
         glBufferData(GL_ARRAY_BUFFER, mesh.vboTexCoords, GL_STATIC_DRAW)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
 
     def set_lookat(self, centroid):
         if centroid is not None:
@@ -380,34 +553,20 @@ class MeshGLWidget(QOpenGLWidget):
         eye = spherical_to_cartesian(self.eye_radius, self.eye_theta, self.eye_phi)
         eye = eye + self.lookat
         self._view_matrix = look_at_matrix(eye, self.lookat, self.up)
-        glMatrixMode(GL_MODELVIEW)
-        glLoadMatrixf(_as_gl_matrix(self._view_matrix))
 
     def _set_projection(self, width, height):
         aspect = max(1, width) / max(1, height)
         self._proj_matrix = perspective_matrix(40.0, aspect, 0.1, 30.0)
-        glMatrixMode(GL_PROJECTION)
-        glLoadMatrixf(_as_gl_matrix(self._proj_matrix))
-        glMatrixMode(GL_MODELVIEW)
-
-    def _restore_fixed_function(self):
-        if bool(glUseProgram):
-            glUseProgram(0)
-        glBindBuffer(GL_ARRAY_BUFFER, 0)
 
     def _draw_vertex_labels(self):
         # QPainter's OpenGL engine inherits the current polygon mode, so
         # GL_LINE (wireframe / shading off) would stroke glyph quads as
         # outlines instead of filling them.
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
-        glDisable(GL_LIGHTING)
         glDisable(GL_DEPTH_TEST)
         glDisable(GL_CULL_FACE)
-        glDisable(GL_TEXTURE_2D)
-        glDisableClientState(GL_VERTEX_ARRAY)
-        glDisableClientState(GL_NORMAL_ARRAY)
-        glDisableClientState(GL_TEXTURE_COORD_ARRAY)
-        glBindBuffer(GL_ARRAY_BUFFER, 0)
+        glBindVertexArray(0)
+        glUseProgram(0)
 
         painter = QPainter(self)
         font = QFont("Courier")
@@ -431,45 +590,16 @@ class MeshGLWidget(QOpenGLWidget):
                              int(round(height - win_y / dpr)),
                              "v%i" % vertex.index)
         painter.end()
-        glEnable(GL_DEPTH_TEST)
-        if self.shade:
-            glEnable(GL_LIGHTING)
-        else:
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
-        if self.cull:
-            glEnable(GL_CULL_FACE)
-        if self.texture:
-            glEnable(GL_TEXTURE_2D)
-
-    def _init_lighting(self):
-        glDisable(GL_COLOR_MATERIAL)
-        glShadeModel(GL_SMOOTH)
-        glEnable(GL_NORMALIZE)
-        glLightModelfv(GL_LIGHT_MODEL_AMBIENT, LIGHT_MODEL_AMBIENT)
-        glLightfv(GL_LIGHT0, GL_AMBIENT, LIGHT0_AMBIENT)
-        glLightfv(GL_LIGHT0, GL_DIFFUSE, LIGHT0_DIFFUSE)
-        glLightfv(GL_LIGHT0, GL_SPECULAR, LIGHT0_SPECULAR)
-        glEnable(GL_LIGHT0)
-        glMaterialfv(GL_FRONT, GL_AMBIENT, AMBIENT)
-        glMaterialfv(GL_FRONT, GL_DIFFUSE, DIFFUSE)
-        glMaterialfv(GL_FRONT, GL_SPECULAR, SPECULAR)
-        glMaterialfv(GL_FRONT, GL_SHININESS, SHININESS)
-        glMatrixMode(GL_MODELVIEW)
-        glPushMatrix()
-        glLoadIdentity()
-        glLightfv(GL_LIGHT0, GL_POSITION, LIGHT0_POSITION)
-        glPopMatrix()
 
     def _init_texture(self):
         img = Image.open(TEXTURE_FILENAME)
         img_data = array(list(img.getdata()), uint8)
-        glEnable(GL_TEXTURE_2D)
-        self.texture_id = glGenTextures(1)
+        self.texture_id = _gl_id(glGenTextures(1))
         glBindTexture(GL_TEXTURE_2D, self.texture_id)
         glTexImage2D(GL_TEXTURE_2D, 0, TEXTURE_ENCODING, img.width, img.height,
                      0, TEXTURE_ENCODING, GL_UNSIGNED_BYTE, img_data)
-        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
-        glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
-        glDisable(GL_TEXTURE_2D)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
+        glBindTexture(GL_TEXTURE_2D, 0)

@@ -15,8 +15,8 @@ from MainWindow import MainWindow
 def make_surface_format():
     fmt = QSurfaceFormat()
     fmt.setRenderableType(QSurfaceFormat.OpenGL)
-    fmt.setVersion(2, 1)
-    fmt.setProfile(QSurfaceFormat.CompatibilityProfile)
+    fmt.setVersion(4, 1)
+    fmt.setProfile(QSurfaceFormat.CoreProfile)
     fmt.setSwapBehavior(QSurfaceFormat.DoubleBuffer)
     fmt.setDepthBufferSize(24)
     fmt.setRedBufferSize(8)
