@@ -1,23 +1,41 @@
-# README for Mesh Viewer
+# Mesh Viewer
+
+A viewer for winged-edge (half-edge) meshes with butterfly subdivision. The
+primary application is a PySide6 window that draws with OpenGL 4.1.
 
 ## Requirements
+
 * Python 3.x
+* PySide6
 * PyOpenGL 3.x
-* PyOpenGL-accelerate 3.x
-* GLU
-* GLUT
-* Python Imaging Library (PIL)
+* NumPy
+* Pillow (PIL)
+* OpenGL 4.1 core profile
 
 ## Files
-* `ViewMesh.py`: The viewer.
-* `Mesh.py`: The mesh data structure for Tetrahedron and Cube. Includes winged-edge data structure and butterfly subdivision algorithm.
-* `FixedBunny.py`: The Stanford Bunny mesh.
-* `block_texture.png`: The texture.
+
+* `MeshViewer.py`: Entry point, application window, and menus.
+* `MeshGLWidget.py`: OpenGL widget (shaders, camera, mesh drawing, vertex labels).
+* `Mesh.py`: Winged-edge mesh, tetrahedron and cube, butterfly subdivision.
+* `Bunny.py`: Stanford Bunny vertex and index data.
+* `block_texture.png`: Optional mesh texture.
 
 ## Usage
-Run `python ViewMesh.py` to view the meshes. Use the pop-up menu to select mesh
-objects and options. Use the keyboard to:
-* `Z`: zoom in
-* `X`: zoom out
-* `Q`: quit.
 
+From this directory:
+
+```bash
+python MeshViewer.py
+```
+
+The window opens on the tetrahedron (wireframe). Use the menu bar:
+
+* **File → Quit** (`Q`)
+* **Bunny**, **Tetrahedron**, **Cube**: built-in meshes and subdivision levels
+* **Display**: shading, backface cull, vertex annotation, smooth shading, texture
+
+Controls:
+
+* Left-drag: rotate
+* Mouse wheel: zoom
+* `Q`: quit
