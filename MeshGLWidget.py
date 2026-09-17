@@ -11,6 +11,7 @@ from numpy.linalg import norm
 from OpenGL.GL import *
 from PIL import Image
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont, QImage, QPainter
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from Bunny import Bunny
@@ -111,6 +112,18 @@ def perspective_matrix(fovy_degrees, aspect, z_near, z_far):
     return matrix
 
 
+def project_to_window(object_xyz, modelview, projection, viewport):
+    clip = projection @ modelview @ array(
+        [object_xyz[0], object_xyz[1], object_xyz[2], 1.0], dtype=float)
+    if clip[3] <= 0:
+        return None
+    ndc = clip[0:3] / clip[3]
+    win_x = viewport[0] + viewport[2] * (ndc[0] + 1.0) * 0.5
+    win_y = viewport[1] + viewport[3] * (ndc[1] + 1.0) * 0.5
+    win_z = (ndc[2] + 1.0) * 0.5
+    return win_x, win_y, win_z
+
+
 def get_centroid(mesh):
     centroid = zeros(3)
     for vert in mesh.verts:
@@ -138,12 +151,16 @@ class MeshGLWidget(QOpenGLWidget):
         self._orbiting = False
         self._mouse_x = 0.0
         self._mouse_y = 0.0
+        self._view_matrix = identity(4, dtype=float)
+        self._proj_matrix = identity(4, dtype=float)
+        self._viewport = (0, 0, 1, 1)
 
         self.vertices_buffer_id = 0
         self.smooth_normals_buffer_id = 0
         self.flat_normals_buffer_id = 0
         self.texture_buffer_id = 0
         self.texture_id = 0
+        self._label_texture_id = 0
 
         self.bunny = None
         self.subdivided_bunny = None
@@ -182,6 +199,7 @@ class MeshGLWidget(QOpenGLWidget):
         self._set_projection(self.width(), self.height())
         self._init_lighting()
         self._init_texture()
+        self._label_texture_id = glGenTextures(1)
 
         glEnableClientState(GL_VERTEX_ARRAY)
         glEnableClientState(GL_NORMAL_ARRAY)
@@ -197,9 +215,13 @@ class MeshGLWidget(QOpenGLWidget):
             self._upload_mesh()
             self._buffers_dirty = False
 
+        self._restore_fixed_function()
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
         glEnable(GL_DEPTH_TEST)
+        glDisable(GL_COLOR_MATERIAL)
+        self._set_projection(self._viewport[2], self._viewport[3])
         self._apply_view()
+        self._init_lighting()
         glColor3f(1, 1, 1)
 
         if self.shade:
@@ -215,6 +237,7 @@ class MeshGLWidget(QOpenGLWidget):
             glDisable(GL_CULL_FACE)
 
         glEnableClientState(GL_VERTEX_ARRAY)
+        glEnableClientState(GL_NORMAL_ARRAY)
         glBindBuffer(GL_ARRAY_BUFFER, self.vertices_buffer_id)
         glVertexPointer(3, GL_FLOAT, 0, None)
 
@@ -234,9 +257,12 @@ class MeshGLWidget(QOpenGLWidget):
         glNormalPointer(GL_FLOAT, 0, None)
 
         glDrawArrays(GL_TRIANGLES, 0, len(self.mesh.vboVertices) // 3)
+        if self.annotate:
+            self._draw_vertex_labels()
 
     def resizeGL(self, width, height):
-        glViewport(0, 0, max(1, width), max(1, height))
+        self._viewport = (0, 0, max(1, width), max(1, height))
+        glViewport(0, 0, self._viewport[2], self._viewport[3])
         self._set_projection(width, height)
 
     def mousePressEvent(self, event):
@@ -342,26 +368,107 @@ class MeshGLWidget(QOpenGLWidget):
     def _apply_view(self):
         eye = spherical_to_cartesian(self.eye_radius, self.eye_theta, self.eye_phi)
         eye = eye + self.lookat
+        self._view_matrix = look_at_matrix(eye, self.lookat, self.up)
         glMatrixMode(GL_MODELVIEW)
-        glLoadMatrixf(_as_gl_matrix(look_at_matrix(eye, self.lookat, self.up)))
+        glLoadMatrixf(_as_gl_matrix(self._view_matrix))
 
     def _set_projection(self, width, height):
         aspect = max(1, width) / max(1, height)
+        self._proj_matrix = perspective_matrix(40.0, aspect, 0.1, 30.0)
         glMatrixMode(GL_PROJECTION)
-        glLoadMatrixf(_as_gl_matrix(perspective_matrix(40.0, aspect, 0.1, 30.0)))
+        glLoadMatrixf(_as_gl_matrix(self._proj_matrix))
         glMatrixMode(GL_MODELVIEW)
 
+    def _restore_fixed_function(self):
+        if bool(glUseProgram):
+            glUseProgram(0)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+    def _draw_vertex_labels(self):
+        fb_w = max(1, self._viewport[2])
+        fb_h = max(1, self._viewport[3])
+        image = QImage(fb_w, fb_h, QImage.Format.Format_ARGB32_Premultiplied)
+        image.fill(0)
+        painter = QPainter(image)
+        font = QFont("Courier")
+        font.setPixelSize(max(13, int(13 * self.devicePixelRatioF())))
+        painter.setFont(font)
+        painter.setPen(Qt.GlobalColor.white)
+        for vertex in self.mesh.verts:
+            if vertex is None:
+                continue
+            projected = project_to_window(
+                vertex.position, self._view_matrix, self._proj_matrix,
+                (0, 0, fb_w, fb_h))
+            if projected is None:
+                continue
+            win_x, win_y, win_z = projected
+            if win_z < 0.0 or win_z > 1.0:
+                continue
+            painter.drawText(int(round(win_x)), int(round(fb_h - win_y)),
+                             "v%i" % vertex.index)
+        painter.end()
+        image = image.mirrored(False, True)
+
+        glDisableClientState(GL_VERTEX_ARRAY)
+        glDisableClientState(GL_NORMAL_ARRAY)
+        glDisableClientState(GL_TEXTURE_COORD_ARRAY)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+        glDisable(GL_DEPTH_TEST)
+        glDisable(GL_LIGHTING)
+        glDisable(GL_CULL_FACE)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glEnable(GL_TEXTURE_2D)
+        glBindTexture(GL_TEXTURE_2D, self._label_texture_id)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 4)
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, fb_w, fb_h, 0,
+                     GL_BGRA, GL_UNSIGNED_BYTE, image.constBits())
+        glColor4f(1, 1, 1, 1)
+        glMatrixMode(GL_PROJECTION)
+        glPushMatrix()
+        glLoadIdentity()
+        glMatrixMode(GL_MODELVIEW)
+        glPushMatrix()
+        glLoadIdentity()
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0)
+        glVertex2f(-1, -1)
+        glTexCoord2f(1, 0)
+        glVertex2f(1, -1)
+        glTexCoord2f(1, 1)
+        glVertex2f(1, 1)
+        glTexCoord2f(0, 1)
+        glVertex2f(-1, 1)
+        glEnd()
+        glPopMatrix()
+        glMatrixMode(GL_PROJECTION)
+        glPopMatrix()
+        glMatrixMode(GL_MODELVIEW)
+        glDisable(GL_BLEND)
+        glDisable(GL_TEXTURE_2D)
+        glEnable(GL_DEPTH_TEST)
+
     def _init_lighting(self):
+        glDisable(GL_COLOR_MATERIAL)
+        glShadeModel(GL_SMOOTH)
+        glEnable(GL_NORMALIZE)
         glLightModelfv(GL_LIGHT_MODEL_AMBIENT, LIGHT_MODEL_AMBIENT)
         glLightfv(GL_LIGHT0, GL_AMBIENT, LIGHT0_AMBIENT)
         glLightfv(GL_LIGHT0, GL_DIFFUSE, LIGHT0_DIFFUSE)
         glLightfv(GL_LIGHT0, GL_SPECULAR, LIGHT0_SPECULAR)
-        glLightfv(GL_LIGHT0, GL_POSITION, LIGHT0_POSITION)
         glEnable(GL_LIGHT0)
         glMaterialfv(GL_FRONT, GL_AMBIENT, AMBIENT)
         glMaterialfv(GL_FRONT, GL_DIFFUSE, DIFFUSE)
         glMaterialfv(GL_FRONT, GL_SPECULAR, SPECULAR)
         glMaterialfv(GL_FRONT, GL_SHININESS, SHININESS)
+        glMatrixMode(GL_MODELVIEW)
+        glPushMatrix()
+        glLoadIdentity()
+        glLightfv(GL_LIGHT0, GL_POSITION, LIGHT0_POSITION)
+        glPopMatrix()
 
     def _init_texture(self):
         img = Image.open(TEXTURE_FILENAME)
