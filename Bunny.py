@@ -1,15 +1,14 @@
 # Bunny.py
 # Created by: Jason Sikes
 # 
-# This is a slight variation of the Stanford Bunny. 
+# This is the Stanford Bunny mesh data from the Stanford 3D Scanning Repository
+# (https://graphics.stanford.edu/data/3Dscanrep/) With some modifications. 
 # 1. The bunny mesh has been scaled to have a unit cube bounding box and translated to
-#    have a center at the origin.
+#    have its origin at its center.
 # 2. The source data for this bunny had missing vertices, missing triangles, and duplicate
 #    vertices and faces.
-# 3. Because of #2 above, the data was unsuitable for use in a half-edge data structure.
-#    I wrote a program to help find the missing and duplicate data which generated the
-#    vertices and indices in this file.
-
+# 3. Because of #2 above, I have added some faces to the mesh to complete the virtual structure so that the data 
+#    can be used in a half-edge data structure.
 
 
 import numpy

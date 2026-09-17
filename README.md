@@ -20,12 +20,20 @@ primary application is a PySide6 window that draws with OpenGL 4.1.
 * `Bunny.py`: Stanford Bunny vertex and index data.
 * `block_texture.png`: Optional mesh texture.
 
+## Setup
+
+Install the Python packages:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
 ## Usage
 
 From this directory:
 
 ```bash
-python MeshViewer.py
+python3 MeshViewer.py
 ```
 
 The window opens on the tetrahedron (wireframe). Use the menu bar:
@@ -39,3 +47,9 @@ Controls:
 * Left-drag: rotate
 * Mouse wheel: zoom
 * `Q`: quit
+
+## About the Bunny
+
+The Stanford Bunny data originated at the
+[Stanford University Computer Graphics Laboratory](https://graphics.stanford.edu/data/3Dscanrep/). I used the low-polygon data set since the purpose of this application is to
+demonstrate surface smoothing using butterfly subdivision. And that is why this bunny is so ugly.
