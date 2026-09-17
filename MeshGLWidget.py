@@ -11,7 +11,7 @@ from numpy.linalg import norm
 from OpenGL.GL import *
 from PIL import Image
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QImage, QPainter
+from PySide6.QtGui import QFont, QPainter
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 
 from Bunny import Bunny
@@ -160,7 +160,6 @@ class MeshGLWidget(QOpenGLWidget):
         self.flat_normals_buffer_id = 0
         self.texture_buffer_id = 0
         self.texture_id = 0
-        self._label_texture_id = 0
 
         self.bunny = None
         self.subdivided_bunny = None
@@ -195,7 +194,6 @@ class MeshGLWidget(QOpenGLWidget):
 
         self.set_lookat(self.tetrahedron_centroid)
         self._init_texture()
-        self._label_texture_id = glGenTextures(1)
 
     def closeEvent(self, event):
         self.delete_gl_objects()
@@ -218,12 +216,9 @@ class MeshGLWidget(QOpenGLWidget):
         self.flat_normals_buffer_id = 0
         self.texture_buffer_id = 0
 
-        texture_ids = [texture_id for texture_id in (
-            self.texture_id, self._label_texture_id) if texture_id]
-        if texture_ids:
-            glDeleteTextures(len(texture_ids), texture_ids)
+        if self.texture_id:
+            glDeleteTextures(1, [self.texture_id])
         self.texture_id = 0
-        self._label_texture_id = 0
         self.doneCurrent()
 
     def paintGL(self):
@@ -401,71 +396,50 @@ class MeshGLWidget(QOpenGLWidget):
         glBindBuffer(GL_ARRAY_BUFFER, 0)
 
     def _draw_vertex_labels(self):
-        fb_w = max(1, self._viewport[2])
-        fb_h = max(1, self._viewport[3])
-        image = QImage(fb_w, fb_h, QImage.Format.Format_ARGB32_Premultiplied)
-        image.fill(0)
-        painter = QPainter(image)
+        # QPainter's OpenGL engine inherits the current polygon mode, so
+        # GL_LINE (wireframe / shading off) would stroke glyph quads as
+        # outlines instead of filling them.
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL)
+        glDisable(GL_LIGHTING)
+        glDisable(GL_DEPTH_TEST)
+        glDisable(GL_CULL_FACE)
+        glDisable(GL_TEXTURE_2D)
+        glDisableClientState(GL_VERTEX_ARRAY)
+        glDisableClientState(GL_NORMAL_ARRAY)
+        glDisableClientState(GL_TEXTURE_COORD_ARRAY)
+        glBindBuffer(GL_ARRAY_BUFFER, 0)
+
+        painter = QPainter(self)
         font = QFont("Courier")
-        font.setPixelSize(max(13, int(13 * self.devicePixelRatioF())))
+        font.setPixelSize(13)
         painter.setFont(font)
         painter.setPen(Qt.GlobalColor.white)
+        dpr = self.devicePixelRatioF()
+        height = self.height()
         for vertex in self.mesh.verts:
             if vertex is None:
                 continue
             projected = project_to_window(
                 vertex.position, self._view_matrix, self._proj_matrix,
-                (0, 0, fb_w, fb_h))
+                self._viewport)
             if projected is None:
                 continue
             win_x, win_y, win_z = projected
             if win_z < 0.0 or win_z > 1.0:
                 continue
-            painter.drawText(int(round(win_x)), int(round(fb_h - win_y)),
+            painter.drawText(int(round(win_x / dpr)),
+                             int(round(height - win_y / dpr)),
                              "v%i" % vertex.index)
         painter.end()
-        image = image.mirrored(False, True)
-
-        glDisableClientState(GL_VERTEX_ARRAY)
-        glDisableClientState(GL_NORMAL_ARRAY)
-        glDisableClientState(GL_TEXTURE_COORD_ARRAY)
-        glBindBuffer(GL_ARRAY_BUFFER, 0)
-        glDisable(GL_DEPTH_TEST)
-        glDisable(GL_LIGHTING)
-        glDisable(GL_CULL_FACE)
-        glEnable(GL_BLEND)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-        glEnable(GL_TEXTURE_2D)
-        glBindTexture(GL_TEXTURE_2D, self._label_texture_id)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 4)
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, fb_w, fb_h, 0,
-                     GL_BGRA, GL_UNSIGNED_BYTE, image.constBits())
-        glColor4f(1, 1, 1, 1)
-        glMatrixMode(GL_PROJECTION)
-        glPushMatrix()
-        glLoadIdentity()
-        glMatrixMode(GL_MODELVIEW)
-        glPushMatrix()
-        glLoadIdentity()
-        glBegin(GL_QUADS)
-        glTexCoord2f(0, 0)
-        glVertex2f(-1, -1)
-        glTexCoord2f(1, 0)
-        glVertex2f(1, -1)
-        glTexCoord2f(1, 1)
-        glVertex2f(1, 1)
-        glTexCoord2f(0, 1)
-        glVertex2f(-1, 1)
-        glEnd()
-        glPopMatrix()
-        glMatrixMode(GL_PROJECTION)
-        glPopMatrix()
-        glMatrixMode(GL_MODELVIEW)
-        glDisable(GL_BLEND)
-        glDisable(GL_TEXTURE_2D)
         glEnable(GL_DEPTH_TEST)
+        if self.shade:
+            glEnable(GL_LIGHTING)
+        else:
+            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE)
+        if self.cull:
+            glEnable(GL_CULL_FACE)
+        if self.texture:
+            glEnable(GL_TEXTURE_2D)
 
     def _init_lighting(self):
         glDisable(GL_COLOR_MATERIAL)
