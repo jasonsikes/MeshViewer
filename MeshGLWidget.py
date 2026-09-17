@@ -570,9 +570,9 @@ class MeshGLWidget(QOpenGLWidget):
 
         painter = QPainter(self)
         font = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
-        font.setPixelSize(13)
+        font.setPixelSize(18)
         painter.setFont(font)
-        painter.setPen(Qt.GlobalColor.white)
+        painter.setPen(Qt.GlobalColor.yellow)
         dpr = self.devicePixelRatioF()
         height = self.height()
         for vertex in self.mesh.verts:
